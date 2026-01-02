@@ -1,0 +1,619 @@
+/* style.css - Fixed Version */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    padding: 20px;
+}
+
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    background: white;
+    border-radius: 20px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+}
+
+header {
+    background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+    color: white;
+    padding: 25px 30px;
+    text-align: center;
+    border-bottom: 5px solid #1abc9c;
+}
+
+header h1 {
+    font-size: 2.8rem;
+    margin-bottom: 10px;
+    letter-spacing: 2px;
+}
+
+.subtitle {
+    font-size: 1.1rem;
+    opacity: 0.9;
+}
+
+.game-container {
+    display: grid;
+    grid-template-columns: 1fr 350px;
+    gap: 30px;
+    padding: 30px;
+    min-height: 700px;
+}
+
+.chessboard-container {
+    background: #f8f9fa;
+    border-radius: 15px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.1);
+}
+
+/* CHESSBOARD CONTAINER - REMOVED CONFLICTING STYLES */
+/* REMOVE THIS: 
+#board .board-b72b1 {
+    position: relative;
+    width: 100%;
+    padding-bottom: 100%; 
+}
+
+#board .board-b72b1 > div {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+} 
+*/
+
+#board {
+    width: 100%;
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+/* Square styling */
+.square-55d63 {
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+}
+
+.square-55d63:hover {
+    transform: scale(1.02);
+    z-index: 10;
+}
+
+.error-message {
+    background: #e74c3c;
+    color: white;
+    padding: 15px;
+    border-radius: 10px;
+    margin-top: 20px;
+    text-align: center;
+    font-weight: bold;
+    display: none;
+    animation: shake 0.5s;
+}
+
+.error-message.show {
+    display: block;
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-5px); }
+    75% { transform: translateX(5px); }
+}
+
+.controls {
+    background: white;
+    border-radius: 15px;
+    padding: 25px;
+    display: flex;
+    flex-direction: column;
+    gap: 25px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+}
+
+.controls h3 {
+    color: #2c3e50;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #3498db;
+    font-size: 1.3rem;
+}
+
+.game-info {
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 10px;
+    border-left: 5px solid #3498db;
+}
+
+#status {
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: #2c3e50;
+    padding: 10px;
+    background: white;
+    border-radius: 8px;
+    text-align: center;
+    margin-bottom: 10px;
+}
+
+#game-over {
+    background: #e74c3c;
+    color: white;
+    padding: 15px;
+    border-radius: 8px;
+    text-align: center;
+    font-weight: bold;
+    font-size: 1.2rem;
+}
+
+#game-over.show {
+    display: block;
+}
+
+.button-group {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+button {
+    background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+    color: white;
+    border: none;
+    padding: 14px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: 600;
+    transition: all 0.3s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+button:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 7px 15px rgba(52, 152, 219, 0.4);
+    background: linear-gradient(135deg, #2980b9 0%, #3498db 100%);
+}
+
+button:active {
+    transform: translateY(-1px);
+}
+
+button.active {
+    background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
+    box-shadow: 0 5px 15px rgba(46, 204, 113, 0.4);
+}
+
+.difficulty {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+}
+
+.diff-btn {
+    font-size: 0.9rem;
+    padding: 10px 5px;
+}
+
+.help-text {
+    color: #7f8c8d;
+    font-size: 0.9rem;
+    text-align: center;
+    margin-top: 10px;
+    font-style: italic;
+}
+
+.move-history {
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 10px;
+    border-left: 5px solid #9b59b6;
+    max-height: 250px;
+    overflow-y: auto;
+}
+
+#move-list {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 5px;
+    font-family: 'Courier New', monospace;
+}
+
+#move-list div {
+    background: white;
+    padding: 8px 12px;
+    border-radius: 6px;
+    margin: 2px;
+    text-align: center;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+#move-list div:hover {
+    background: #3498db;
+    color: white;
+    transform: translateX(3px);
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* Click-to-move styling */
+.selected {
+    background-color: rgba(46, 204, 113, 0.7) !important;
+    box-shadow: inset 0 0 20px rgba(46, 204, 113, 0.3);
+}
+
+.valid-move {
+    position: relative;
+}
+
+.valid-move::after {
+    content: '';
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    background: rgba(52, 152, 219, 0.8);
+    border-radius: 50%;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 8px rgba(52, 152, 219, 0.8);
+    pointer-events: none;
+}
+
+.valid-capture {
+    position: relative;
+}
+
+.valid-capture::after {
+    content: '';
+    position: absolute;
+    width: 60px;
+    height: 60px;
+    border: 3px solid rgba(231, 76, 60, 0.8);
+    border-radius: 50%;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 12px rgba(231, 76, 60, 0.6);
+    pointer-events: none;
+}
+
+/* Piece dragging styling */
+.piece-417db {
+    transition: transform 0.15s;
+    cursor: grab;
+    z-index: 20 !important;
+}
+
+.piece-417db:hover {
+    transform: scale(1.1);
+}
+
+.piece-417db:active {
+    cursor: grabbing;
+}
+
+/* Move history entries */
+.move-entry {
+    display: flex;
+    align-items: center;
+    padding: 5px 10px;
+    margin: 2px 0;
+    background: white;
+    border-radius: 5px;
+    border: 1px solid #eee;
+}
+
+.move-number {
+    font-weight: bold;
+    margin-right: 10px;
+    color: #2c3e50;
+    min-width: 30px;
+}
+
+.move {
+    padding: 3px 8px;
+    margin: 0 5px;
+    border-radius: 3px;
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+}
+
+.white-move {
+    background: #f8f9fa;
+    color: #2c3e50;
+}
+
+.black-move {
+    background: #2c3e50;
+    color: white;
+}
+
+/* Button states */
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
+button:disabled:hover {
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+/* Square hover effects */
+.square-55d63 {
+    cursor: pointer !important;
+    transition: background-color 0.2s;
+}
+
+.square-55d63:hover {
+    background-color: rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Responsive design */
+@media (max-width: 1200px) {
+    .game-container {
+        grid-template-columns: 1fr;
+    }
+    
+    #board {
+        max-width: 500px;
+    }
+}
+
+/* Mobile Styles - Tablet and below */
+@media (max-width: 768px) {
+    .container {
+        padding: 10px;
+        border-radius: 10px;
+    }
+    
+    header {
+        padding: 15px 20px;
+    }
+    
+    header h1 {
+        font-size: 1.8rem;
+    }
+    
+    .subtitle {
+        font-size: 1rem;
+    }
+    
+    .game-container {
+        grid-template-columns: 1fr;
+        gap: 20px;
+        padding: 15px;
+        min-height: auto;
+    }
+    
+    /* Chessboard on mobile */
+    .chessboard-container {
+        width: 100%;
+        height: auto;
+        min-height: 70vh; /* Make it bigger on mobile */
+        padding: 10px;
+        margin: 0;
+        max-width: 100%;
+        display: block; /* Change from flex to block */
+    }
+    
+    /* Chessboard itself - make it responsive */
+    #board {
+        width: 100%;
+        height: auto;
+        max-width: 100%;
+        margin: 0 auto;
+    }
+    
+    /* Make the board square on mobile */
+    .board-b72b1 {
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+    
+    /* Controls section */
+    .controls {
+        padding: 20px;
+        gap: 20px;
+        width: 100%;
+    }
+    
+    /* Stack buttons vertically on mobile */
+    .button-group {
+        grid-template-columns: 1fr;
+    }
+    
+    .difficulty {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    
+    /* Make buttons bigger for touch */
+    button {
+        padding: 16px 12px;
+        font-size: 1rem;
+    }
+    
+    /* Increase move history max height */
+    .move-history {
+        max-height: 200px;
+    }
+    
+    /* Larger valid move indicators for touch */
+    .valid-move::after {
+        width: 24px;
+        height: 24px;
+    }
+    
+    .valid-capture::after {
+        width: 50px;
+        height: 50px;
+    }
+    
+    /* Game info bigger text */
+    #status {
+        font-size: 1.1rem;
+        padding: 12px;
+    }
+    
+    .controls h3 {
+        font-size: 1.2rem;
+    }
+    
+    /* Remove tap highlight on mobile */
+    .square-55d63 {
+        -webkit-tap-highlight-color: transparent;
+    }
+    
+    .piece-417db {
+        touch-action: manipulation;
+    }
+    
+    /* Adjust board container */
+    .board-b72b1 {
+        position: relative !important;
+    }
+}
+
+/* For very small mobile devices */
+@media (max-width: 480px) {
+    .chessboard-container {
+        min-height: 65vh;
+        padding: 5px;
+    }
+    
+    header h1 {
+        font-size: 1.5rem;
+    }
+    
+    .controls h3 {
+        font-size: 1.1rem;
+    }
+    
+    /* Make everything a bit bigger */
+    button {
+        padding: 14px 10px;
+        font-size: 0.95rem;
+    }
+    
+    /* Adjust for very small screens */
+    body {
+        padding: 5px;
+    }
+    
+    .container {
+        border-radius: 8px;
+    }
+    
+    .valid-move::after {
+        width: 20px;
+        height: 20px;
+    }
+    
+    .valid-capture::after {
+        width: 45px;
+        height: 45px;
+    }
+}
+
+/* For landscape mobile */
+@media (max-width: 768px) and (orientation: landscape) {
+    .game-container {
+        grid-template-columns: 1fr 1fr;
+        gap: 15px;
+    }
+    
+    .chessboard-container {
+        min-height: 75vh;
+    }
+    
+    .controls {
+        max-height: 75vh;
+        overflow-y: auto;
+        padding: 15px;
+    }
+    
+    /* Smaller buttons in landscape */
+    .button-group {
+        grid-template-columns: 1fr;
+    }
+    
+    button {
+        padding: 10px 8px;
+        font-size: 0.9rem;
+    }
+    
+    .move-history {
+        max-height: 120px;
+    }
+    
+    .valid-move::after {
+        width: 18px;
+        height: 18px;
+    }
+    
+    .valid-capture::after {
+        width: 40px;
+        height: 40px;
+    }
+}
+
+/* Touch improvements for mobile */
+@media (hover: none) and (pointer: coarse) {
+    /* For touch devices */
+    .piece-417db {
+        touch-action: manipulation;
+    }
+    
+    .square-55d63 {
+        -webkit-tap-highlight-color: transparent;
+    }
+}
+
+/* Prevent zoom on double-tap */
+* {
+    touch-action: manipulation;
+}
+
+/* Ensure chessboard.js can work properly */
+.board-b72b1 {
+    display: block;
+    position: relative;
+}
+
+/* Remove any conflicting styles */
+.board-b72b1,
+#board {
+    overflow: visible !important;
+}
+
+/* Make sure chessboard container is visible */
+.chessboard-63f37 {
+    display: block;
+    width: 100%;
+}

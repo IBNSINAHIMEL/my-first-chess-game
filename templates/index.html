@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- Combined all viewport settings into one meta tag -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Chess Game</title>
+    
+    <!-- Mobile-specific meta tags -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#667eea">
+    
+    <!-- CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/chessboard-1.0.0.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    
+    <!-- JavaScript -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>♔ Chess by ibnsina ♚</h1>
+            <div class="subtitle">Try play vs ai ,beginner button for fast response</div>
+        </header>
+
+        <div class="game-container">
+            <div class="chessboard-container">
+                <div id="board"></div>
+                <div id="error-message" class="error-message hidden"></div>
+            </div>
+
+            <div class="controls">
+                <div class="game-info">
+                    <h3>Game Status</h3>
+                    <div id="status">White to move</div>
+                    <div id="game-over" class="hidden"></div>
+                </div>
+
+                <div class="game-modes">
+                    <h3>Play Mode</h3>
+                    <div class="button-group">
+                        <button id="two-player-btn" class="active">👥 Two Players</button>
+                        <button id="vs-bot-btn">🤖 Play vs AI</button>
+                    </div>
+                </div>
+
+                <div class="side-controls hidden">
+                    <h3>Your Side</h3>
+                    <div class="button-group">
+                        <button id="flip-sides-btn">🔄 Switch Sides</button>
+                    </div>
+                    <div id="side-info">You are playing as White</div>
+                </div>
+
+                <div class="bot-controls hidden">
+                    <h3>AI Strength</h3>
+                    <div class="difficulty">
+                        <button class="diff-btn" data-level="1">Beginner</button>
+                        <button class="diff-btn" data-level="2">Intermediate</button>
+                        <button class="diff-btn active" data-level="3">Advanced</button>
+                        <button class="diff-btn" data-level="4">Master</button>
+                    </div>
+                </div>
+
+                <div class="game-controls">
+                    <h3>Controls</h3>
+                    <div class="button-group">
+                        <button id="new-game-btn">🔄 New Game</button>
+                        <button id="flip-board-btn">🔄 Flip Board</button>
+                        <button id="undo-btn">↩️ Undo Move</button>
+                        <button id="hints-btn">🔍 Show Hints</button>
+                    </div>
+                    <div class="help-text">
+                        <small>Click a piece to select it, then click a highlighted square to move</small>
+                    </div>
+                </div>
+
+                <div class="move-history">
+                    <h3>Move History</h3>
+                    <div id="move-list"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- JavaScript files -->
+        <script src="{{ url_for('static', filename='js/chessboard-1.0.0.js') }}"></script>
+        <script src="{{ url_for('static', filename='js/game.js') }}"></script>
+        
+        <!-- Optional: You can keep this for debugging if needed -->
+        <script>
+            // Debug: Log when chessboard is loaded
+            $(document).ready(function() {
+                console.log('Document ready, chessboard should initialize');
+            });
+        </script>
+    </div>
+</body>
+</html>
