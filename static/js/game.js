@@ -179,9 +179,12 @@ $(document).ready(function() {
             const isValidMove = gameState.validMoves.some(move => move.to === square);
             
             if (isValidMove) {
-                // Find the specific move (for promotion info)
-                const move = gameState.validMoves.find(m => m.to === square);
-                makeMove(gameState.selectedSquare, square, move ? move.promotion : null);
+                // For click-to-move, we'll handle promotion after validation
+                makeMove(gameState.selectedSquare, square).then(success => {
+                    if (!success) {
+                        clearSelection();
+                    }
+                });
                 return;
             }
             
@@ -290,117 +293,170 @@ $(document).ready(function() {
         }
     }
 
-    // Make a move
-    async function makeMove(from, to, promotion = null) {
-        console.log('Making move:', from, '->', to);
+ // Make a move
+async function makeMove(from, to, promotion = null) {
+    console.log('Making move:', from, '->', to, 'promotion:', promotion);
+    
+    try {
+        const response = await fetch('/validate_move', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                fen: getCurrentFEN(),
+                from: from,
+                to: to,
+                promotion: promotion
+            })
+        });
         
-        try {
-            const response = await fetch('/validate_move', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    fen: getCurrentFEN(),
-                    from: from,
-                    to: to,
-                    promotion: promotion
-                })
-            });
-            
-            const data = await response.json();
-            
-            if (!data.valid) {
-                showMessage(data.error || 'Invalid move');
-                return false;
-            }
-            
-            // Save current FEN for undo
-            gameState.fenHistory.push(getCurrentFEN());
-            
-            // Update game state
-            gameState.currentFen = data.fen;
-            gameState.isWhiteTurn = !gameState.isWhiteTurn;
-            gameState.isGameOver = data.checkmate || data.stalemate || data.draw;
-            
-            // Update board
-            gameState.board.position(data.fen);
-            
-            // Clear selection
-            clearSelection();
-            
-            // Update UI
-            updateGameStatus(data);
-            
-            // Add to move history
-            const moveNotation = getMoveNotation(from, to);
-            gameState.moveHistory.push({
-                move: moveNotation,
-                color: gameState.isWhiteTurn ? 'black' : 'white'
-            });
-            updateMoveHistory();
-            
-            // Update control buttons
-            updateControlButtons();
-            
-            // If game over, show message
-            if (gameState.isGameOver) {
-                showGameOverMessage(data);
-            } else {
-                // If vs bot and it's bot's turn, get bot move
-                if (gameState.gameMode === 'vs-bot' && 
-                    ((gameState.playerSide === 'white' && !gameState.isWhiteTurn) ||
-                     (gameState.playerSide === 'black' && gameState.isWhiteTurn))) {
-                    setTimeout(getBotMove, 500);
+        const data = await response.json();
+        
+        if (!data.valid) {
+            if (data.requires_promotion) {
+                console.log('Pawn promotion required');
+                // Get the piece color
+                const position = gameState.board.position();
+                const piece = position[from];
+                const color = piece ? piece.charAt(0) : (gameState.isWhiteTurn ? 'w' : 'b');
+                
+                console.log('Getting promotion piece for', color, 'pawn');
+                
+                try {
+                    // Get promotion piece from user
+                    const promotionPiece = await getPromotionPiece(color, from, to);
+                    console.log('Got promotion piece:', promotionPiece);
+                    
+                    if (!promotionPiece) {
+                        showMessage('Promotion cancelled');
+                        return false;
+                    }
+                    
+                    // Retry the move with promotion
+                    return await makeMove(from, to, promotionPiece);
+                } catch (error) {
+                    console.error('Error getting promotion piece:', error);
+                    showMessage('Promotion error');
+                    return false;
                 }
             }
-            
-            return true;
-        } catch (error) {
-            console.error('Error making move:', error);
-            showMessage('Error making move: ' + error.message);
+            showMessage(data.error || 'Invalid move');
             return false;
+        }
+        
+        // Save current FEN for undo - ALWAYS save before updating
+        gameState.fenHistory.push(getCurrentFEN());
+        console.log('Saved FEN to history, total:', gameState.fenHistory.length);
+        
+        // Update game state
+        gameState.currentFen = data.fen;
+        gameState.isWhiteTurn = !gameState.isWhiteTurn;
+        gameState.isGameOver = data.checkmate || data.stalemate || data.draw;
+        
+        // Update board
+        gameState.board.position(data.fen);
+        
+        // Clear selection
+        clearSelection();
+        
+        // Update UI
+        updateGameStatus(data);
+        
+        // Add to move history
+        const moveNotation = getMoveNotation(from, to, promotion);
+        gameState.moveHistory.push({
+            move: moveNotation,
+            color: gameState.isWhiteTurn ? 'black' : 'white'
+        });
+        updateMoveHistory();
+        
+        // Update control buttons
+        updateControlButtons();
+        
+        // If game over, show message
+        if (gameState.isGameOver) {
+            showGameOverMessage(data);
+        } else {
+            // If vs bot and it's bot's turn, get bot move
+            if (gameState.gameMode === 'vs-bot' && 
+                ((gameState.playerSide === 'white' && !gameState.isWhiteTurn) ||
+                 (gameState.playerSide === 'black' && gameState.isWhiteTurn))) {
+                
+                // Save FEN again before bot moves (so we can undo both)
+                gameState.fenHistory.push(getCurrentFEN());
+                console.log('Saved FEN before bot move, total:', gameState.fenHistory.length);
+                
+                setTimeout(getBotMove, 500);
+            }
+        }
+        
+        return true;
+    } catch (error) {
+        console.error('Error making move:', error);
+        showMessage('Error making move: ' + error.message);
+        return false;
+    }
+}
+
+    // Get promotion piece from user
+    async function getPromotionPiece(color, from, to) {
+        console.log('getPromotionPiece called, color:', color);
+        
+        if (!window.showPromotionModal) {
+            console.error('showPromotionModal not available, defaulting to queen');
+            return 'q';
+        }
+        
+        try {
+            // Use the showPromotionModal function which returns a promise
+            const promotionPiece = await window.showPromotionModal(color, from, to);
+            console.log('Promotion piece selected:', promotionPiece);
+            return promotionPiece;
+        } catch (error) {
+            console.error('Error in showPromotionModal:', error);
+            return 'q'; // Default to queen
         }
     }
 
     // Get bot move
-    async function getBotMove() {
-        if (gameState.isGameOver) return;
+  // Get bot move
+async function getBotMove() {
+    if (gameState.isGameOver) return;
+    
+    showMessage('Bot is thinking...');
+    
+    try {
+        const response = await fetch('/get_bot_move', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                fen: getCurrentFEN(),
+                difficulty: gameState.difficulty
+            })
+        });
         
-        showMessage('Bot is thinking...');
+        const data = await response.json();
         
-        try {
-            const response = await fetch('/get_bot_move', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    fen: getCurrentFEN(),
-                    difficulty: gameState.difficulty
-                })
-            });
-            
-            const data = await response.json();
-            
-            if (data.error) {
-                throw new Error(data.error);
-            }
-            
-            // Save current FEN for undo
-            gameState.fenHistory.push(getCurrentFEN());
-            
-            // Make the bot move
-            await makeMove(data.from_square, data.to_square, data.promotion);
-            
-        } catch (error) {
-            console.error('Error getting bot move:', error);
-            showMessage('Bot error: ' + error.message);
-            
-            // Fallback: try to make a random legal move
-            makeRandomBotMove();
+        if (data.error) {
+            throw new Error(data.error);
         }
+        
+        console.log('Bot move received:', data.from_square, '->', data.to_square);
+        
+        // Make the bot move - don't save FEN here, it's already saved in makeMove
+        await makeMove(data.from_square, data.to_square, data.promotion);
+        
+    } catch (error) {
+        console.error('Error getting bot move:', error);
+        showMessage('Bot error: ' + error.message);
+        
+        // Fallback: try to make a random legal move
+        await makeRandomBotMove();
     }
+}
 
     // Fallback: make random move for bot
     async function makeRandomBotMove() {
@@ -455,12 +511,16 @@ $(document).ready(function() {
     }
 
     // Drop handler
-    function onDrop(source, target, piece, newPos, oldPos, orientation) {
+    async function onDrop(source, target, piece, newPos, oldPos, orientation) {
         // Clear any existing selection
         clearSelection();
         
         // Validate the move
-        makeMove(source, target);
+        const success = await makeMove(source, target);
+        
+        if (!success) {
+            return 'snapback';
+        }
         
         return true;
     }
@@ -539,7 +599,10 @@ $(document).ready(function() {
     }
 
     // Get move notation
-    function getMoveNotation(from, to) {
+    function getMoveNotation(from, to, promotion = null) {
+        if (promotion) {
+            return `${from}→${to}(${promotion.toUpperCase()})`;
+        }
         return `${from}→${to}`;
     }
 
@@ -655,6 +718,16 @@ $(document).ready(function() {
         updateControlButtons();
         $('#game-over').addClass('hidden');
         
+        // Hide promotion modal if open
+        if (window.hidePromotionModal) {
+            window.hidePromotionModal();
+        }
+        
+        // Reset promotion state
+        if (window.resetPromotionState) {
+            window.resetPromotionState();
+        }
+        
         // If vs bot and player is black, make bot move
         if (gameState.gameMode === 'vs-bot' && gameState.playerSide === 'black') {
             setTimeout(getBotMove, 500);
@@ -668,34 +741,112 @@ $(document).ready(function() {
         gameState.boardFlipped = !gameState.boardFlipped;
     }
 
-    // Undo move
-    function undoMove() {
-        if (gameState.fenHistory.length === 0) {
-            showMessage('No moves to undo');
-            return;
-        }
-        
-        // Get the last FEN
-        const lastFen = gameState.fenHistory.pop();
-        gameState.board.position(lastFen);
-        gameState.currentFen = lastFen;
-        gameState.isWhiteTurn = !gameState.isWhiteTurn;
-        gameState.isGameOver = false;
-        
-        // Remove last move from history
-        if (gameState.moveHistory.length > 0) {
-            gameState.moveHistory.pop();
-        }
-        
-        // Update UI
-        updateGameStatus({});
-        updateMoveHistory();
-        clearSelection();
-        updateControlButtons();
-        $('#game-over').addClass('hidden');
-        
-        showMessage('Move undone');
+  // Undo move - FIXED for bot mode
+function undoMove() {
+    if (gameState.fenHistory.length === 0) {
+        showMessage('No moves to undo');
+        return;
     }
+    
+    console.log('Undoing move, current mode:', gameState.gameMode, 'fenHistory length:', gameState.fenHistory.length);
+    
+    // In vs bot mode, undo both player's and bot's moves
+    if (gameState.gameMode === 'vs-bot') {
+        // Need to undo 2 moves (player + bot) when it's player's turn
+        // or 1 move (bot only) when it's bot's turn
+        
+        const playerColor = gameState.playerSide.charAt(0);
+        const currentTurnColor = gameState.isWhiteTurn ? 'w' : 'b';
+        
+        console.log('Player color:', playerColor, 'Current turn:', currentTurnColor);
+        
+        if (playerColor === currentTurnColor) {
+            // It's player's turn, so bot just moved
+            // Undo only bot's move (1 move)
+            undoSingleMove();
+        } else {
+            // It's bot's turn, so player just moved
+            // Need to undo both player's move AND bot's previous move (2 moves)
+            if (gameState.fenHistory.length >= 2) {
+                console.log('Undoing 2 moves (player + bot)');
+                undoTwoMoves();
+            } else {
+                console.log('Only 1 move to undo');
+                undoSingleMove();
+            }
+        }
+    } else {
+        // Two player mode - just undo one move
+        undoSingleMove();
+    }
+    
+    // Hide promotion modal if open
+    if (window.hidePromotionModal) {
+        window.hidePromotionModal();
+    }
+    
+    showMessage('Move undone');
+}
+
+// Helper function to undo a single move
+function undoSingleMove() {
+    if (gameState.fenHistory.length === 0) return;
+    
+    // Get the last FEN
+    const lastFen = gameState.fenHistory.pop();
+    gameState.board.position(lastFen);
+    gameState.currentFen = lastFen;
+    gameState.isWhiteTurn = !gameState.isWhiteTurn;
+    gameState.isGameOver = false;
+    
+    // Remove last move from history
+    if (gameState.moveHistory.length > 0) {
+        gameState.moveHistory.pop();
+    }
+    
+    // Update UI
+    updateGameStatus({});
+    updateMoveHistory();
+    clearSelection();
+    updateControlButtons();
+    $('#game-over').addClass('hidden');
+}
+
+// Helper function to undo two moves
+function undoTwoMoves() {
+    if (gameState.fenHistory.length < 2) {
+        undoSingleMove();
+        return;
+    }
+    
+    console.log('Undoing 2 moves from history');
+    
+    // Pop twice to go back two moves
+    gameState.fenHistory.pop(); // Current position
+    const lastFen = gameState.fenHistory.pop(); // Position before player's move
+    gameState.board.position(lastFen);
+    gameState.currentFen = lastFen;
+    
+    // Update turn: If we undid 2 moves, we're back to the player's turn
+    const playerColor = gameState.playerSide.charAt(0);
+    gameState.isWhiteTurn = (playerColor === 'w');
+    gameState.isGameOver = false;
+    
+    // Remove two moves from history
+    if (gameState.moveHistory.length > 0) {
+        gameState.moveHistory.pop(); // Bot's move
+    }
+    if (gameState.moveHistory.length > 0) {
+        gameState.moveHistory.pop(); // Player's move
+    }
+    
+    // Update UI
+    updateGameStatus({});
+    updateMoveHistory();
+    clearSelection();
+    updateControlButtons();
+    $('#game-over').addClass('hidden');
+}
 
     // Toggle hints
     function toggleHints() {
