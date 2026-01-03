@@ -19,9 +19,9 @@ def get_bot_move():
     difficulty = data.get('difficulty', 3)
     
     try:
-        # Update engine difficulty
+        # Update engine difficulty - use update_depth() method
         chess_engine.difficulty = difficulty
-        chess_engine.max_depth = difficulty + 1
+        chess_engine.update_depth()  # This sets all search parameters correctly
         
         # Get best move
         from_sq, to_sq, promotion = chess_engine.get_best_move(fen)
@@ -48,6 +48,8 @@ def get_bot_move():
             
     except Exception as e:
         print(f"Error in get_bot_move: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 400
 
 @app.route('/get_legal_moves', methods=['POST'])
@@ -83,7 +85,26 @@ def validate_move():
     
     try:
         board = chess.Board(fen)
-        move = chess.Move.from_uci(f"{from_sq}{to_sq}{promotion if promotion else ''}")
+        
+        # Check if this is a pawn promotion move
+        piece = board.piece_at(chess.parse_square(from_sq))
+        is_pawn = piece and piece.piece_type == chess.PAWN
+        target_rank = chess.square_rank(chess.parse_square(to_sq))
+        
+        # Determine if move requires promotion
+        if is_pawn and ((piece.color == chess.WHITE and target_rank == 7) or 
+                       (piece.color == chess.BLACK and target_rank == 0)):
+            # If promotion is not specified, we need to ask for it
+            if not promotion:
+                return jsonify({
+                    'valid': False, 
+                    'requires_promotion': True,
+                    'error': 'Pawn promotion required'
+                })
+        
+        # Create the move
+        move_uci = f"{from_sq}{to_sq}{promotion if promotion else ''}"
+        move = chess.Move.from_uci(move_uci)
         
         if move in board.legal_moves:
             board.push(move)
@@ -93,7 +114,8 @@ def validate_move():
                 'check': board.is_check(),
                 'checkmate': board.is_checkmate(),
                 'stalemate': board.is_stalemate(),
-                'draw': board.is_game_over() and not board.is_checkmate()
+                'draw': board.is_game_over() and not board.is_checkmate(),
+                'promotion_made': promotion if promotion else None
             })
         else:
             return jsonify({'valid': False, 'error': 'Illegal move'})
@@ -116,5 +138,4 @@ if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8080))
     
     # Disable debug mode for production
-
     app.run(debug=False, host='0.0.0.0', port=port)
