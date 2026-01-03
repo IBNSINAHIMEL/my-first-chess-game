@@ -1,22 +1,24 @@
 """
-Strong Chess Engine using python-chess with minimax, alpha-beta pruning, and position evaluation
+Optimized Chess Engine using python-chess with time management
+Compatible with the Flask web interface
 """
 
 import chess
 import math
 import random
+import time
 from typing import List, Tuple, Optional
 
 class StrongChessEngine:
-    """Strong chess engine with proper search algorithm"""
+    """Optimized chess engine with proper search algorithm and time management"""
     
     def __init__(self, difficulty=3):
         """
         difficulty levels:
-        1: Easy (depth 2)
-        2: Medium (depth 3) 
-        3: Hard (depth 4)
-        4: Expert (depth 5)
+        1: Easy (depth 2-3, 5 seconds max)
+        2: Medium (depth 3-4, 10 seconds max) 
+        3: Hard (depth 4-5, 15 seconds max)
+        4: Expert (depth 5-6, 20 seconds max)
         """
         self.difficulty = difficulty
         
@@ -30,13 +32,13 @@ class StrongChessEngine:
             chess.KING: 20000
         }
         
-        # Piece-square tables (middlegame) - Improved values
+        # Piece-square tables - simplified for speed
         self.pawn_table = [
             0,   0,   0,   0,   0,   0,   0,   0,
             50,  50,  50,  50,  50,  50,  50,  50,
-            10,  10,  20,  30,  30,  20,  10,  10,
-            5,   5,  10,  25,  25,  10,   5,   5,
-            0,   0,   0,  20,  20,   0,   0,   0,
+            10,  10,  20,  25,  25,  20,  10,  10,
+            5,   5,  10,  20,  20,  10,   5,   5,
+            0,   0,   0,  15,  15,   0,   0,   0,
             5,  -5, -10,   0,   0, -10,  -5,   5,
             5,  10,  10, -20, -20,  10,  10,   5,
             0,   0,   0,   0,   0,   0,   0,   0
@@ -44,7 +46,7 @@ class StrongChessEngine:
         
         self.knight_table = [
             -50, -40, -30, -30, -30, -30, -40, -50,
-            -40, -20,   0,   0,   0,   0, -20, -40,
+            -40, -20,   0,   5,   5,   0, -20, -40,
             -30,   0,  10,  15,  15,  10,   0, -30,
             -30,   5,  15,  20,  20,  15,   5, -30,
             -30,   0,  15,  20,  20,  15,   0, -30,
@@ -55,34 +57,34 @@ class StrongChessEngine:
         
         self.bishop_table = [
             -20, -10, -10, -10, -10, -10, -10, -20,
-            -10,   0,   0,   0,   0,   0,   0, -10,
-            -10,   0,   5,  10,  10,   5,   0, -10,
-            -10,   5,   5,  10,  10,   5,   5, -10,
-            -10,   0,  10,  10,  10,  10,   0, -10,
-            -10,  10,  10,  10,  10,  10,  10, -10,
             -10,   5,   0,   0,   0,   0,   5, -10,
+            -10,  10,  10,  10,  10,  10,  10, -10,
+            -10,   0,  10,  10,  10,  10,   0, -10,
+            -10,   5,   5,  10,  10,   5,   5, -10,
+            -10,   0,   5,  10,  10,   5,   0, -10,
+            -10,   0,   0,   0,   0,   0,   0, -10,
             -20, -10, -10, -10, -10, -10, -10, -20
         ]
         
         self.rook_table = [
-            0,   0,   0,   0,   0,   0,   0,   0,
+            0,   0,   0,   5,   5,   0,   0,   0,
+            -5,   0,   0,   0,   0,   0,   0,  -5,
+            -5,   0,   0,   0,   0,   0,   0,  -5,
+            -5,   0,   0,   0,   0,   0,   0,  -5,
+            -5,   0,   0,   0,   0,   0,   0,  -5,
+            -5,   0,   0,   0,   0,   0,   0,  -5,
             5,  10,  10,  10,  10,  10,  10,   5,
-            -5,   0,   0,   0,   0,   0,   0,  -5,
-            -5,   0,   0,   0,   0,   0,   0,  -5,
-            -5,   0,   0,   0,   0,   0,   0,  -5,
-            -5,   0,   0,   0,   0,   0,   0,  -5,
-            -5,   0,   0,   0,   0,   0,   0,  -5,
-            0,   0,   0,   5,   5,   0,   0,   0
+            0,   0,   0,   0,   0,   0,   0,   0
         ]
         
         self.queen_table = [
             -20, -10, -10,  -5,  -5, -10, -10, -20,
-            -10,   0,   0,   0,   0,   0,   0, -10,
-            -10,   0,   5,   5,   5,   5,   0, -10,
-            -5,   0,   5,   5,   5,   5,   0,  -5,
-            0,   0,   5,   5,   5,   5,   0,  -5,
-            -10,   5,   5,   5,   5,   5,   0, -10,
             -10,   0,   5,   0,   0,   0,   0, -10,
+            -10,   5,   5,   5,   5,   5,   0, -10,
+            0,   0,   5,   5,   5,   5,   0,  -5,
+            -5,   0,   5,   5,   5,   5,   0,  -5,
+            -10,   0,   5,   5,   5,   5,   0, -10,
+            -10,   0,   0,   0,   0,   0,   0, -10,
             -20, -10, -10,  -5,  -5, -10, -10, -20
         ]
         
@@ -108,55 +110,51 @@ class StrongChessEngine:
             -50, -30, -30, -30, -30, -30, -30, -50
         ]
         
-        # Set search parameters based on difficulty
+        # Initialize parameters
         self.update_depth()
         
-        # Transposition table
-        self.transposition_table = {}
+        # Search tracking
         self.nodes_searched = 0
-        self.max_nodes = 0
+        self.start_time = None
+        self.timeout = False
+        self.best_move_found = None
         
-        # Killer moves and history heuristic
-        self.killer_moves = [[None, None] for _ in range(64)]  # Two killer moves per ply
-        self.history_table = [[0 for _ in range(64)] for _ in range(64)]  # [from][to]
+        # Move ordering heuristics
+        self.killer_moves = [[None, None] for _ in range(64)]
+        self.history_table = [[0 for _ in range(64)] for _ in range(64)]
         
-        print(f"🎯 Chess Engine initialized with difficulty {self.difficulty} (depth: {self.max_depth})")
+        print(f"🎯 Chess Engine initialized with difficulty {self.difficulty}")
+        print(f"   Target: Depth {self.target_depth}, Time limit: {self.max_time}s")
     
     def update_depth(self):
-        """Update search depth based on current difficulty"""
-        if self.difficulty == 1:
-            self.max_depth = 2  # Easy
-            self.max_nodes = 5000
-        elif self.difficulty == 2:
-            self.max_depth = 3  # Medium
-            self.max_nodes = 20000
-        elif self.difficulty == 3:
-            self.max_depth = 4  # Hard
-            self.max_nodes = 50000
-        elif self.difficulty == 4:
-            self.max_depth = 5  # Expert
-            self.max_nodes = 100000
-        else:
-            self.max_depth = 3  # Default
-            self.max_nodes = 20000
+        """Update search parameters based on current difficulty"""
+        # Time limits per difficulty
+        self.time_limits = {1: 5, 2: 10, 3: 15, 4: 20}  # seconds
+        self.depth_limits = {1: 3, 2: 4, 3: 5, 4: 6}
+        
+        self.max_time = self.time_limits.get(self.difficulty, 10)
+        self.target_depth = self.depth_limits.get(self.difficulty, 4)
+        self.max_depth = self.target_depth  # For compatibility
+        self.max_nodes = 1000000  # Default high value
+    
+    def check_timeout(self) -> bool:
+        """Check if search should timeout"""
+        if self.start_time and (time.time() - self.start_time) > self.max_time:
+            self.timeout = True
+            return True
+        return False
     
     def evaluate_position(self, board: chess.Board) -> float:
-        """Evaluate the board position with improved evaluation"""
+        """Fast evaluation of the board position"""
+        # Quick terminal condition checks
         if board.is_checkmate():
-            return -100000 if board.turn else 100000
+            return -99999 if board.turn else 99999
         
         if board.is_stalemate() or board.is_insufficient_material():
             return 0
         
+        # Material and positional evaluation
         score = 0
-        
-        # Material evaluation
-        white_material = 0
-        black_material = 0
-        
-        # Piece-square evaluation
-        white_position = 0
-        black_position = 0
         
         for square in chess.SQUARES:
             piece = board.piece_at(square)
@@ -164,577 +162,351 @@ class StrongChessEngine:
                 # Material value
                 material = self.piece_values[piece.piece_type]
                 
-                # Position value
-                position_value = self.get_position_value(piece, square, board)
-                
+                # Position value (simplified)
                 if piece.color == chess.WHITE:
-                    white_material += material
-                    white_position += position_value
+                    score += material + self.get_fast_position_value(piece, square, board)
                 else:
-                    black_material += material
-                    black_position += position_value
+                    score -= material + self.get_fast_position_value(piece, square, board)
         
-        score = (white_material + white_position) - (black_material + black_position)
+        # Simple mobility bonus
+        legal_moves = len(list(board.legal_moves))
+        if board.turn == chess.WHITE:
+            score += legal_moves * 5
+        else:
+            score -= legal_moves * 5
         
-        # Mobility (number of legal moves)
-        white_mobility = len(list(board.legal_moves))
-        board.turn = not board.turn
-        black_mobility = len(list(board.legal_moves))
-        board.turn = not board.turn  # Reset turn
-        
-        score += (white_mobility - black_mobility) * 10
-        
-        # Pawn structure
-        score += self.evaluate_pawn_structure(board)
-        
-        # King safety
-        score += self.evaluate_king_safety(board)
-        
-        # Center control
-        score += self.evaluate_center_control(board)
-        
-        # Piece activity
-        score += self.evaluate_piece_activity(board)
-        
-        # Bishop pair bonus
-        if self.count_bishops(board, chess.WHITE) >= 2:
-            score += 30
-        if self.count_bishops(board, chess.BLACK) >= 2:
-            score -= 30
-        
-        # Rook on open/semi-open files
-        score += self.evaluate_rooks(board)
-        
-        # Perspective: positive score is good for white, negative for black
         return score
     
-    def get_position_value(self, piece: chess.Piece, square: chess.Square, board: chess.Board) -> float:
-        """Get position bonus for a piece"""
+    def get_fast_position_value(self, piece: chess.Piece, square: chess.Square, board: chess.Board) -> float:
+        """Fast position value lookup"""
         tables = {
             chess.PAWN: self.pawn_table,
             chess.KNIGHT: self.knight_table,
             chess.BISHOP: self.bishop_table,
             chess.ROOK: self.rook_table,
             chess.QUEEN: self.queen_table,
-            chess.KING: self.king_middle_table if self.count_material(board) > 2000 else self.king_end_table
+            chess.KING: self.king_middle_table
         }
         
-        table = tables[piece.piece_type]
+        table = tables.get(piece.piece_type)
+        if not table:
+            return 0
         
         # Flip square for black pieces
         if piece.color == chess.WHITE:
             idx = square
         else:
-            # Mirror vertically
             row = 7 - (square // 8)
             col = square % 8
             idx = row * 8 + col
         
         return table[idx]
     
-    def count_material(self, board: chess.Board) -> int:
-        """Count total material on board"""
-        total = 0
-        for square in chess.SQUARES:
-            piece = board.piece_at(square)
-            if piece and piece.piece_type != chess.KING:
-                total += self.piece_values[piece.piece_type]
-        return total
-    
-    def count_bishops(self, board: chess.Board, color: chess.Color) -> int:
-        """Count bishops of a given color"""
-        count = 0
-        for square in chess.SQUARES:
-            piece = board.piece_at(square)
-            if piece and piece.color == color and piece.piece_type == chess.BISHOP:
-                count += 1
-        return count
-    
-    def evaluate_pawn_structure(self, board: chess.Board) -> float:
-        """Evaluate pawn structure"""
-        score = 0
+    def iterative_deepening_search(self, board: chess.Board, max_depth: int) -> Tuple[Optional[chess.Move], float]:
+        """Perform iterative deepening search with time management"""
+        self.start_time = time.time()
+        self.timeout = False
+        self.nodes_searched = 0
         
-        # Doubled pawns penalty
-        for file in range(8):
-            white_pawns = 0
-            black_pawns = 0
+        best_move = None
+        best_value = -math.inf if board.turn == chess.WHITE else math.inf
+        
+        # Try depths from 2 to max_depth
+        for depth in range(2, max_depth + 1):
+            if self.timeout:
+                break
+                
+            print(f"  Searching depth {depth}...")
             
-            for rank in range(8):
-                square = chess.square(file, rank)
-                piece = board.piece_at(square)
+            # Search with current depth
+            try:
+                current_best_move, current_best_value = self.alpha_beta_search(
+                    board, depth, -math.inf, math.inf, board.turn == chess.WHITE
+                )
                 
-                if piece == chess.Piece(chess.PAWN, chess.WHITE):
-                    white_pawns += 1
-                elif piece == chess.Piece(chess.PAWN, chess.BLACK):
-                    black_pawns += 1
-            
-            if white_pawns > 1:
-                score -= (white_pawns - 1) * 20  # Doubled pawn penalty
-            if black_pawns > 1:
-                score += (black_pawns - 1) * 20
-        
-        # Isolated pawns penalty
-        for file in range(8):
-            for rank in range(8):
-                square = chess.square(file, rank)
-                piece = board.piece_at(square)
-                
-                if piece == chess.Piece(chess.PAWN, chess.WHITE):
-                    # Check if pawn is isolated (no friendly pawns on adjacent files)
-                    isolated = True
-                    for adj_file in [file - 1, file + 1]:
-                        if 0 <= adj_file < 8:
-                            for adj_rank in range(8):
-                                adj_square = chess.square(adj_file, adj_rank)
-                                adj_piece = board.piece_at(adj_square)
-                                if adj_piece == chess.Piece(chess.PAWN, chess.WHITE):
-                                    isolated = False
-                                    break
-                    if isolated:
-                        score -= 15
-                
-                elif piece == chess.Piece(chess.PAWN, chess.BLACK):
-                    isolated = True
-                    for adj_file in [file - 1, file + 1]:
-                        if 0 <= adj_file < 8:
-                            for adj_rank in range(8):
-                                adj_square = chess.square(adj_file, adj_rank)
-                                adj_piece = board.piece_at(adj_square)
-                                if adj_piece == chess.Piece(chess.PAWN, chess.BLACK):
-                                    isolated = False
-                                    break
-                    if isolated:
-                        score += 15
-        
-        # Passed pawns bonus
-        for square in chess.SQUARES:
-            piece = board.piece_at(square)
-            if piece and piece.piece_type == chess.PAWN:
-                if self.is_passed_pawn(board, square, piece.color):
-                    bonus = 30
-                    # Extra bonus for advanced passed pawns
-                    rank = chess.square_rank(square)
-                    if piece.color == chess.WHITE:
-                        bonus += rank * 10  # Closer to promotion
-                    else:
-                        bonus += (7 - rank) * 10
+                if not self.timeout and current_best_move:
+                    best_move = current_best_move
+                    best_value = current_best_value
+                    print(f"    Depth {depth}: eval = {best_value:.1f}, nodes = {self.nodes_searched}")
                     
-                    if piece.color == chess.WHITE:
-                        score += bonus
-                    else:
-                        score -= bonus
-        
-        return score
-    
-    def is_passed_pawn(self, board: chess.Board, square: chess.Square, color: chess.Color) -> bool:
-        """Check if pawn is a passed pawn"""
-        file = chess.square_file(square)
-        rank = chess.square_rank(square)
-        
-        if color == chess.WHITE:
-            # Check files: current, left, right
-            for f in [file - 1, file, file + 1]:
-                if 0 <= f < 8:
-                    for r in range(rank + 1, 8):  # Ahead of the pawn
-                        s = chess.square(f, r)
-                        piece = board.piece_at(s)
-                        if piece and piece.piece_type == chess.PAWN and piece.color == chess.BLACK:
-                            return False
-        else:  # BLACK
-            for f in [file - 1, file, file + 1]:
-                if 0 <= f < 8:
-                    for r in range(rank - 1, -1, -1):  # Ahead of the pawn (downwards)
-                        s = chess.square(f, r)
-                        piece = board.piece_at(s)
-                        if piece and piece.piece_type == chess.PAWN and piece.color == chess.WHITE:
-                            return False
-        
-        return True
-    
-    def evaluate_king_safety(self, board: chess.Board) -> float:
-        """Evaluate king safety"""
-        score = 0
-        
-        # White king
-        white_king = board.king(chess.WHITE)
-        if white_king:
-            # Penalize if king is not castled in middle game
-            if white_king in [chess.E1, chess.D1, chess.F1] and board.fullmove_number < 20:
-                score -= 40
-            
-            # Bonus for castled king
-            if white_king in [chess.G1, chess.C1]:  # Castled
-                score += 30
-            
-            # Penalty for exposed king (few pawns around)
-            score -= self.king_shield_penalty(board, white_king, chess.WHITE)
-        
-        # Black king
-        black_king = board.king(chess.BLACK)
-        if black_king:
-            if black_king in [chess.E8, chess.D8, chess.F8] and board.fullmove_number < 20:
-                score += 40
-            
-            if black_king in [chess.G8, chess.C8]:
-                score -= 30
-            
-            score += self.king_shield_penalty(board, black_king, chess.BLACK)
-        
-        return score
-    
-    def king_shield_penalty(self, board: chess.Board, king_square: chess.Square, color: chess.Color) -> float:
-        """Calculate penalty for weak king pawn shield"""
-        penalty = 0
-        king_file = chess.square_file(king_square)
-        king_rank = chess.square_rank(king_square)
-        
-        # Check pawns in front of king
-        for file_offset in [-1, 0, 1]:
-            file = king_file + file_offset
-            if 0 <= file < 8:
-                if color == chess.WHITE:
-                    pawn_rank = king_rank + 1  # Square in front of king
-                else:
-                    pawn_rank = king_rank - 1
-                
-                if 0 <= pawn_rank < 8:
-                    square = chess.square(file, pawn_rank)
-                    piece = board.piece_at(square)
-                    if not (piece and piece.piece_type == chess.PAWN and piece.color == color):
-                        penalty += 10  # Missing pawn in shield
-        
-        return penalty
-    
-    def evaluate_center_control(self, board: chess.Board) -> float:
-        """Evaluate center control"""
-        score = 0
-        center_squares = [chess.D4, chess.E4, chess.D5, chess.E5]
-        extended_center = [chess.C3, chess.D3, chess.E3, chess.F3,
-                          chess.C4, chess.D4, chess.E4, chess.F4,
-                          chess.C5, chess.D5, chess.E5, chess.F5,
-                          chess.C6, chess.D6, chess.E6, chess.F6]
-        
-        for square in extended_center:
-            piece = board.piece_at(square)
-            if piece:
-                if piece.color == chess.WHITE:
-                    score += 5
-                else:
-                    score -= 5
-        
-        return score
-    
-    def evaluate_piece_activity(self, board: chess.Board) -> float:
-        """Evaluate piece activity"""
-        score = 0
-        
-        # Knights in center bonus
-        for square in chess.SQUARES:
-            piece = board.piece_at(square)
-            if piece and piece.piece_type == chess.KNIGHT:
-                file = chess.square_file(square)
-                rank = chess.square_rank(square)
-                
-                # Knights in center are better
-                center_distance = max(abs(file - 3.5), abs(rank - 3.5))
-                activity_bonus = 20 - int(center_distance * 5)
-                
-                if piece.color == chess.WHITE:
-                    score += activity_bonus
-                else:
-                    score -= activity_bonus
-        
-        return score
-    
-    def evaluate_rooks(self, board: chess.Board) -> float:
-        """Evaluate rook placement"""
-        score = 0
-        
-        for square in chess.SQUARES:
-            piece = board.piece_at(square)
-            if piece and piece.piece_type == chess.ROOK:
-                # Rook on open file bonus
-                file = chess.square_file(square)
-                is_open_file = True
-                
-                for rank in range(8):
-                    s = chess.square(file, rank)
-                    p = board.piece_at(s)
-                    if p and p.piece_type == chess.PAWN:
-                        is_open_file = False
+                    # If we found a forced mate, no need to search deeper
+                    if abs(best_value) > 90000:
+                        print(f"    Found forced mate, stopping search")
                         break
-                
-                if is_open_file:
-                    if piece.color == chess.WHITE:
-                        score += 25
-                    else:
-                        score -= 25
-                
-                # Rook on 7th rank bonus (attacking enemy king's position)
-                rank = chess.square_rank(square)
-                if (piece.color == chess.WHITE and rank == 6) or (piece.color == chess.BLACK and rank == 1):
-                    if piece.color == chess.WHITE:
-                        score += 30
-                    else:
-                        score -= 30
+            except Exception as e:
+                if not self.timeout:
+                    print(f"    Error at depth {depth}: {e}")
+                break
         
-        return score
+        print(f"  Search complete: {self.nodes_searched} nodes")
+        return best_move, best_value
     
-    def minimax(self, board: chess.Board, depth: int, alpha: float, beta: float, 
-                maximizing: bool, ply: int = 0) -> float:
-        """Minimax with alpha-beta pruning and quiescence search"""
+    def alpha_beta_search(self, board: chess.Board, depth: int, alpha: float, beta: float, 
+                         maximizing: bool, ply: int = 0) -> Tuple[Optional[chess.Move], float]:
+        """Alpha-beta search with time management"""
+        # Check timeout every 1000 nodes
+        if self.nodes_searched % 1000 == 0 and self.check_timeout():
+            return None, 0
+        
         self.nodes_searched += 1
         
-        # Check node limit
-        if self.nodes_searched >= self.max_nodes:
-            return self.evaluate_position(board)
+        # Check for terminal conditions
+        if board.is_checkmate():
+            return None, -99999 if maximizing else 99999
         
-        # Check for repetition or 50-move rule
-        if board.can_claim_threefold_repetition() or board.halfmove_clock >= 100:
-            return 0
+        if board.is_stalemate() or board.is_insufficient_material() or board.can_claim_threefold_repetition():
+            return None, 0
         
-        # Quiescence search at leaf nodes
+        # Leaf node - use quiescence search or evaluation
         if depth == 0:
-            return self.quiescence(board, alpha, beta, maximizing)
+            return None, self.quiescence(board, alpha, beta, maximizing)
         
-        # Generate moves
-        moves = self.order_moves(board, ply)
+        # Generate and order moves
+        moves = self.order_moves(board, ply, depth==1)
+        best_move = None
+        best_value = -math.inf if maximizing else math.inf
         
-        if maximizing:
-            max_eval = -math.inf
-            for move in moves:
-                board.push(move)
-                eval = self.minimax(board, depth - 1, alpha, beta, False, ply + 1)
-                board.pop()
+        for move in moves:
+            # Check timeout
+            if self.timeout:
+                break
                 
-                max_eval = max(max_eval, eval)
-                alpha = max(alpha, eval)
-                
-                if beta <= alpha:
-                    # Store killer move
-                    if not board.is_capture(move):
+            board.push(move)
+            
+            # Recursive search
+            _, move_value = self.alpha_beta_search(board, depth - 1, alpha, beta, not maximizing, ply + 1)
+            
+            board.pop()
+            
+            if self.timeout:
+                break
+            
+            if maximizing:
+                if move_value > best_value:
+                    best_value = move_value
+                    best_move = move
+                    alpha = max(alpha, best_value)
+            else:
+                if move_value < best_value:
+                    best_value = move_value
+                    best_move = move
+                    beta = min(beta, best_value)
+            
+            # Alpha-beta cutoff
+            if beta <= alpha:
+                # Store killer move
+                if not board.is_capture(move):
+                    if move != self.killer_moves[ply][0]:
                         self.killer_moves[ply][1] = self.killer_moves[ply][0]
                         self.killer_moves[ply][0] = move
-                    break
-            
-            return max_eval
-        else:
-            min_eval = math.inf
-            for move in moves:
-                board.push(move)
-                eval = self.minimax(board, depth - 1, alpha, beta, True, ply + 1)
-                board.pop()
-                
-                min_eval = min(min_eval, eval)
-                beta = min(beta, eval)
-                
-                if beta <= alpha:
-                    # Store killer move
-                    if not board.is_capture(move):
-                        self.killer_moves[ply][1] = self.killer_moves[ply][0]
-                        self.killer_moves[ply][0] = move
-                    break
-            
-            return min_eval
+                break
+        
+        return best_move, best_value if best_value != -math.inf and best_value != math.inf else 0
     
     def quiescence(self, board: chess.Board, alpha: float, beta: float, maximizing: bool) -> float:
-        """Quiescence search to evaluate only capture moves at leaf nodes"""
-        self.nodes_searched += 1
-        
-        # Evaluate static position
+        """Quiescence search to evaluate only capture moves"""
+        # Static evaluation
         stand_pat = self.evaluate_position(board)
         
         if maximizing:
             if stand_pat >= beta:
                 return beta
-            if alpha < stand_pat:
+            if stand_pat > alpha:
                 alpha = stand_pat
         else:
             if stand_pat <= alpha:
                 return alpha
-            if beta > stand_pat:
+            if stand_pat < beta:
                 beta = stand_pat
         
-        # Only consider captures and promotions
-        moves = []
+        # Generate capture moves only
+        capture_moves = []
         for move in board.legal_moves:
-            if board.is_capture(move) or move.promotion:
-                moves.append(move)
+            if board.is_capture(move):
+                capture_moves.append(move)
         
-        # Order capture moves (MVV-LVA)
-        moves.sort(key=lambda m: self.capture_value(board, m), reverse=True)
+        # Sort captures by expected gain (MVV-LVA)
+        capture_moves.sort(key=lambda m: self.estimate_capture_value(board, m), reverse=True)
         
-        if maximizing:
-            for move in moves:
-                board.push(move)
-                score = self.quiescence(board, alpha, beta, False)
-                board.pop()
+        for move in capture_moves:
+            # Check timeout
+            if self.check_timeout():
+                break
                 
+            # Delta pruning - skip obviously bad captures
+            if self.delta_pruning(board, move, stand_pat, alpha, beta, maximizing):
+                continue
+                
+            board.push(move)
+            score = -self.quiescence(board, -beta, -alpha, not maximizing)
+            board.pop()
+            
+            if maximizing:
                 if score >= beta:
                     return beta
                 if score > alpha:
                     alpha = score
-            
-            return alpha
-        else:
-            for move in moves:
-                board.push(move)
-                score = self.quiescence(board, alpha, beta, True)
-                board.pop()
-                
+            else:
                 if score <= alpha:
                     return alpha
                 if score < beta:
                     beta = score
-            
-            return beta
+        
+        return alpha if maximizing else beta
     
-    def capture_value(self, board: chess.Board, move: chess.Move) -> int:
-        """Calculate MVV-LVA value for move ordering"""
-        value = 0
-        
-        # Most Valuable Victim - Least Valuable Aggressor
-        if board.is_capture(move):
-            captured = board.piece_at(move.to_square)
-            attacker = board.piece_at(move.from_square)
+    def estimate_capture_value(self, board: chess.Board, move: chess.Move) -> int:
+        """Estimate capture value for move ordering (MVV-LVA)"""
+        if not board.is_capture(move):
+            return 0
             
-            if captured and attacker:
-                victim_value = self.piece_values.get(captured.piece_type, 0)
-                aggressor_value = self.piece_values.get(attacker.piece_type, 0)
-                value = victim_value * 10 - aggressor_value
+        victim = board.piece_at(move.to_square)
+        aggressor = board.piece_at(move.from_square)
         
-        # Promotions are valuable
-        if move.promotion:
-            value += 1000
+        if not victim or not aggressor:
+            return 0
+            
+        victim_value = self.piece_values.get(victim.piece_type, 0)
+        aggressor_value = self.piece_values.get(aggressor.piece_type, 0)
         
-        return value
+        return victim_value * 10 - aggressor_value
     
-    def order_moves(self, board: chess.Board, ply: int = 0) -> List[chess.Move]:
-        """Order moves for better alpha-beta pruning with killer moves and history heuristic"""
+    def delta_pruning(self, board: chess.Board, move: chess.Move, stand_pat: float, 
+                     alpha: float, beta: float, maximizing: bool) -> bool:
+        """Delta pruning - skip captures that can't improve alpha"""
+        if not board.is_capture(move):
+            return False
+            
+        victim = board.piece_at(move.to_square)
+        if not victim:
+            return False
+            
+        victim_value = self.piece_values.get(victim.piece_type, 0)
+        
+        # If capturing the victim can't raise alpha, skip it
+        if maximizing:
+            if stand_pat + victim_value + 100 < alpha:  # Small margin
+                return True
+        else:
+            if stand_pat - victim_value - 100 > beta:  # Small margin
+                return True
+                
+        return False
+    
+    def order_moves(self, board: chess.Board, ply: int = 0, is_qsearch: bool = False) -> List[chess.Move]:
+        """Order moves for better alpha-beta pruning"""
         moves = list(board.legal_moves)
+        
+        # If very few moves or at leaf of quiescence search, don't spend time sorting
+        if len(moves) <= 3 or (is_qsearch and len(moves) <= 5):
+            return moves
         
         move_scores = []
         
         for move in moves:
             score = 0
             
-            # 1. PV move (we don't have PV in this simple implementation)
-            
-            # 2. Captures (MVV-LVA)
+            # 1. Captures (ordered by MVV-LVA)
             if board.is_capture(move):
-                score = 10000 + self.capture_value(board, move)
+                score = 10000 + self.estimate_capture_value(board, move)
             
-            # 3. Promotions
+            # 2. Promotions
             elif move.promotion:
                 score = 9000 + self.piece_values.get(move.promotion, 0)
             
-            # 4. Killer moves
-            elif self.killer_moves[ply][0] == move:
-                score = 8000
-            elif self.killer_moves[ply][1] == move:
-                score = 7000
+            # 3. Killer moves (only in main search)
+            elif not is_qsearch:
+                if self.killer_moves[ply][0] == move:
+                    score = 8000
+                elif self.killer_moves[ply][1] == move:
+                    score = 7000
             
-            # 5. History heuristic
-            else:
-                score = self.history_table[move.from_square][move.to_square]
-            
-            # 6. Good positional moves
+            # 4. Simple positional bonuses
             piece = board.piece_at(move.from_square)
             if piece:
-                # Developing minor pieces in opening
+                # Center control
+                to_file = chess.square_file(move.to_square)
+                to_rank = chess.square_rank(move.to_square)
+                
+                # Bonus for moving to center
+                if 2 <= to_file <= 5 and 2 <= to_rank <= 5:
+                    score += 50
+                
+                # Bonus for developing pieces early
                 if board.fullmove_number < 10:
                     if piece.piece_type in [chess.KNIGHT, chess.BISHOP]:
-                        if move.from_square in [chess.B1, chess.G1, chess.B8, chess.G8,  # Knight starting squares
-                                               chess.C1, chess.F1, chess.C8, chess.F8]:  # Bishop starting squares
-                            score += 500
+                        if move.from_square in [chess.B1, chess.G1, chess.B8, chess.G8,
+                                               chess.C1, chess.F1, chess.C8, chess.F8]:
+                            score += 100
                 
-                # Center control
-                if move.to_square in [chess.D4, chess.E4, chess.D5, chess.E5]:
-                    score += 100
-                
-                # Castling
+                # Bonus for castling
                 if board.is_castling(move):
-                    score += 600
+                    score += 300
             
             move_scores.append((move, score))
         
-        # Sort by score
+        # Sort by score (highest first)
         move_scores.sort(key=lambda x: x[1], reverse=True)
         return [move for move, _ in move_scores]
     
-    def update_history(self, move: chess.Move, depth: int, ply: int):
-        """Update history heuristic table"""
-        self.history_table[move.from_square][move.to_square] += depth * depth
-    
     def get_best_move(self, fen: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-        """Get the best move for given position with iterative deepening"""
+        """Get the best move for given position with time management"""
         try:
             board = chess.Board(fen)
             
             if board.is_game_over():
                 return None, None, None
             
-            # Update depth based on current difficulty
-            self.update_depth()
+            print(f"🤖 Engine thinking (difficulty: {self.difficulty}, time limit: {self.max_time}s)...")
             
-            # Reset search statistics
-            self.nodes_searched = 0
-            self.transposition_table.clear()
+            # Determine search depth based on position complexity
+            legal_moves = list(board.legal_moves)
             
-            print(f"🤖 Engine thinking (difficulty: {self.difficulty}, depth: {self.max_depth})...")
+            # Adjust depth based on position complexity
+            if len(legal_moves) > 40:  # Very complex position
+                effective_depth = min(self.target_depth - 1, 4)
+            elif len(legal_moves) > 25:  # Complex position
+                effective_depth = min(self.target_depth, 5)
+            else:  # Normal position
+                effective_depth = self.target_depth
             
-            # Simple iterative deepening for better move selection
-            best_move = None
-            best_value = -math.inf if board.turn == chess.WHITE else math.inf
+            print(f"  Position has {len(legal_moves)} legal moves, searching to depth {effective_depth}")
             
-            # Try different depths based on time/complexity
-            target_depth = self.max_depth
-            if len(list(board.legal_moves)) > 35:  # Very complex position
-                target_depth = max(2, target_depth - 1)
+            # Perform iterative deepening search
+            best_move, eval_score = self.iterative_deepening_search(board, effective_depth)
             
-            # Order moves
-            ordered_moves = self.order_moves(board)
-            
-            alpha = -math.inf
-            beta = math.inf
-            
-            # Search each move
-            for move in ordered_moves:
-                if self.nodes_searched >= self.max_nodes:
-                    print(f"⚠️ Node limit reached ({self.nodes_searched})")
-                    break
+            # If search timed out or found no move, use fallback
+            if not best_move or self.timeout:
+                print(f"  {'Timeout' if self.timeout else 'No move found'}, using best available move")
                 
-                board.push(move)
-                eval = self.minimax(board, target_depth - 1, alpha, beta, board.turn == chess.WHITE)
-                board.pop()
-                
-                if (board.turn == chess.WHITE and eval > best_value) or \
-                   (board.turn == chess.BLACK and eval < best_value):
-                    best_value = eval
-                    best_move = move
-                
-                if board.turn == chess.WHITE:
-                    alpha = max(alpha, eval)
-                else:
-                    beta = min(beta, eval)
+                # Try to use the last best move found
+                if not best_move:
+                    # Order moves and pick the best one based on simple evaluation
+                    ordered_moves = self.order_moves(board)
+                    
+                    # Evaluate first few moves quickly
+                    best_score = -math.inf if board.turn == chess.WHITE else math.inf
+                    for move in ordered_moves[:5]:  # Only check first 5
+                        board.push(move)
+                        score = self.evaluate_position(board)
+                        board.pop()
+                        
+                        if (board.turn == chess.WHITE and score > best_score) or \
+                           (board.turn == chess.BLACK and score < best_score):
+                            best_score = score
+                            best_move = move
             
-            if best_move:
-                from_sq = chess.square_name(best_move.from_square)
-                to_sq = chess.square_name(best_move.to_square)
-                promotion = chess.piece_symbol(best_move.promotion).lower() if best_move.promotion else None
-                
-                # Update history heuristic
-                self.update_history(best_move, target_depth, 0)
-                
-                print(f"✅ Engine move: {from_sq} -> {to_sq} (eval: {best_value:.1f}, nodes: {self.nodes_searched})")
-                return from_sq, to_sq, promotion
+            # Final fallback: random move
+            if not best_move:
+                print("  Using random move as fallback")
+                best_move = random.choice(list(board.legal_moves))
             
-            # Fallback: choose the first legal move
-            print("⚠️ No best move found, using first legal move")
-            move = list(board.legal_moves)[0]
-            from_sq = chess.square_name(move.from_square)
-            to_sq = chess.square_name(move.to_square)
-            promotion = chess.piece_symbol(move.promotion).lower() if move.promotion else None
+            # Convert move to string format
+            from_sq = chess.square_name(best_move.from_square)
+            to_sq = chess.square_name(best_move.to_square)
+            promotion = chess.piece_symbol(best_move.promotion).lower() if best_move.promotion else None
+            
+            elapsed = time.time() - self.start_time if self.start_time else 0
+            print(f"✅ Engine move: {from_sq} -> {to_sq} (eval: {eval_score:.1f}, time: {elapsed:.1f}s)")
             
             return from_sq, to_sq, promotion
             
@@ -749,7 +521,6 @@ class StrongChessEngine:
                 if board.is_game_over():
                     return None, None, None
                 
-                import random
                 move = random.choice(list(board.legal_moves))
                 from_sq = chess.square_name(move.from_square)
                 to_sq = chess.square_name(move.to_square)
@@ -762,15 +533,26 @@ class StrongChessEngine:
 
 # Test the engine
 if __name__ == "__main__":
-    print("🧪 Testing Strong Chess Engine...")
+    print("🧪 Testing Optimized Chess Engine...")
     
-    engine = StrongChessEngine(difficulty=3)
-    
-    # Test with starting position
-    test_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-    result = engine.get_best_move(test_fen)
-    
-    if result[0]:
-        print(f"✅ Engine test successful: {result[0]} -> {result[1]}")
-    else:
-        print("❌ Engine test failed")
+    # Test each difficulty level
+    for difficulty in range(1, 5):
+        print(f"\n{'='*50}")
+        print(f"Testing difficulty {difficulty}")
+        print('='*50)
+        
+        engine = StrongChessEngine(difficulty=difficulty)
+        
+        # Test with starting position
+        test_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        
+        start_time = time.time()
+        result = engine.get_best_move(test_fen)
+        elapsed = time.time() - start_time
+        
+        if result[0]:
+            print(f"✅ Difficulty {difficulty}: {result[0]} -> {result[1]} (time: {elapsed:.1f}s)")
+            if elapsed > engine.max_time * 1.1:  # 10% tolerance
+                print(f"⚠️  Warning: Slightly over time limit ({elapsed:.1f}s > {engine.max_time}s)")
+        else:
+            print(f"❌ Difficulty {difficulty} test failed")
