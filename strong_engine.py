@@ -7,7 +7,7 @@ import chess
 import math
 import random
 import time
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 
 class StrongChessEngine:
     """Optimized chess engine with proper search algorithm and time management"""
@@ -32,7 +32,17 @@ class StrongChessEngine:
             chess.KING: 20000
         }
         
-        # Piece-square tables - simplified for speed
+        # SEE piece values (for exchange evaluation)
+        self.see_values = {
+            chess.PAWN: 100,
+            chess.KNIGHT: 320,
+            chess.BISHOP: 330,
+            chess.ROOK: 500,
+            chess.QUEEN: 900,
+            chess.KING: 20000
+        }
+        
+        # Piece-square tables
         self.pawn_table = [
             0,   0,   0,   0,   0,   0,   0,   0,
             50,  50,  50,  50,  50,  50,  50,  50,
@@ -123,6 +133,31 @@ class StrongChessEngine:
         self.killer_moves = [[None, None] for _ in range(64)]
         self.history_table = [[0 for _ in range(64)] for _ in range(64)]
         
+        # Transposition table (persistent across moves)
+        self.tt: Dict[int, dict] = {}
+        self.tt_max_size = 1000000  # avoid memory blow
+        
+        # Pawn hash table (caches pawn structure evaluation)
+        self.pawn_tt: Dict[int, float] = {}
+        
+        # Principal variation move from previous iteration (for move ordering)
+        self.pv_move = None
+        
+        # For null-move pruning: reduction factor (R=2) and material threshold to avoid zugzwang
+        self.null_move_reduction = 2
+        self.null_move_material_threshold = 1500  # skip if total material below this
+        self.endgame_material_threshold = 2000    # below this, consider endgame
+        
+        # Aspiration window size (centipawns)
+        self.aspiration_window = 50
+        self.aspiration_max_widening = 5  # number of widening attempts
+        
+        # Futility pruning margin base (scaled by depth)
+        self.futility_margin_base = 300
+        
+        # Reverse futility pruning margin
+        self.reverse_futility_margin_base = 300
+        
         print(f"🎯 Chess Engine initialized with difficulty {self.difficulty}")
         print(f"   Target: Depth {self.target_depth}, Time limit: {self.max_time}s")
     
@@ -144,72 +179,256 @@ class StrongChessEngine:
             return True
         return False
     
+    # --------------------------------------------------------------------------
+    # Evaluation with optimizations and pawn hash
+    # --------------------------------------------------------------------------
+    def is_passed_pawn(self, board: chess.Board, square: chess.Square, color: chess.Color) -> bool:
+        """Return True if the pawn on square is a passed pawn."""
+        file = chess.square_file(square)
+        rank = chess.square_rank(square)
+        
+        if color == chess.WHITE:
+            for f in [file-1, file, file+1]:
+                if f < 0 or f > 7:
+                    continue
+                for r in range(rank+1, 8):
+                    s = chess.square(f, r)
+                    p = board.piece_at(s)
+                    if p and p.piece_type == chess.PAWN and p.color == chess.BLACK:
+                        return False
+        else:
+            for f in [file-1, file, file+1]:
+                if f < 0 or f > 7:
+                    continue
+                for r in range(rank-1, -1, -1):
+                    s = chess.square(f, r)
+                    p = board.piece_at(s)
+                    if p and p.piece_type == chess.PAWN and p.color == chess.WHITE:
+                        return False
+        return True
+    
+    def evaluate_pawn_structure(self, board: chess.Board) -> float:
+        """
+        Evaluate pawn structure (passed, doubled, isolated) and return score from white perspective.
+        Uses pawn hash table for caching.
+        """
+        # Compute pawn hash key (simple xor of pawn squares and colors)
+        pawn_key = 0
+        for square in chess.SQUARES:
+            piece = board.piece_at(square)
+            if piece and piece.piece_type == chess.PAWN:
+                # Mix square and color into key
+                pawn_key ^= (square + 1) * (1 if piece.color == chess.WHITE else 2)
+        
+        if pawn_key in self.pawn_tt:
+            return self.pawn_tt[pawn_key]
+        
+        # Collect pawn squares
+        white_pawns = []
+        black_pawns = []
+        for square in chess.SQUARES:
+            piece = board.piece_at(square)
+            if piece and piece.piece_type == chess.PAWN:
+                if piece.color == chess.WHITE:
+                    white_pawns.append(square)
+                else:
+                    black_pawns.append(square)
+        
+        score = 0
+        
+        # Passed pawns
+        for sq in white_pawns:
+            if self.is_passed_pawn(board, sq, chess.WHITE):
+                score += 50
+        for sq in black_pawns:
+            if self.is_passed_pawn(board, sq, chess.BLACK):
+                score -= 50
+        
+        # Doubled & isolated pawns – count per file
+        def pawn_counts(pawns):
+            files = [0]*8
+            for sq in pawns:
+                files[chess.square_file(sq)] += 1
+            return files
+        
+        white_files = pawn_counts(white_pawns)
+        black_files = pawn_counts(black_pawns)
+        
+        # Doubled penalty
+        doubled_w = sum(max(0, cnt-1) for cnt in white_files)
+        doubled_b = sum(max(0, cnt-1) for cnt in black_files)
+        score -= doubled_w * 20
+        score += doubled_b * 20
+        
+        # Isolated penalty
+        isolated_w = 0
+        for f in range(8):
+            if white_files[f] > 0:
+                left = f>0 and white_files[f-1]>0
+                right = f<7 and white_files[f+1]>0
+                if not left and not right:
+                    isolated_w += 1
+        isolated_b = 0
+        for f in range(8):
+            if black_files[f] > 0:
+                left = f>0 and black_files[f-1]>0
+                right = f<7 and black_files[f+1]>0
+                if not left and not right:
+                    isolated_b += 1
+        score -= isolated_w * 15
+        score += isolated_b * 15
+        
+        self.pawn_tt[pawn_key] = score
+        return score
+    
     def evaluate_position(self, board: chess.Board) -> float:
-        """Fast evaluation of the board position"""
+        """
+        Fast evaluation of the board position.
+        Returns score from the perspective of the side to move.
+        """
         # Quick terminal condition checks
         if board.is_checkmate():
-            return -99999 if board.turn else 99999
-        
+            return -100000  # will be adjusted with ply later
         if board.is_stalemate() or board.is_insufficient_material():
             return 0
         
         # Material and positional evaluation
         score = 0
+        white_material = 0
+        black_material = 0
         
-        for square in chess.SQUARES:
-            piece = board.piece_at(square)
-            if piece:
-                # Material value
-                material = self.piece_values[piece.piece_type]
-                
-                # Position value (simplified)
-                if piece.color == chess.WHITE:
-                    score += material + self.get_fast_position_value(piece, square, board)
-                else:
-                    score -= material + self.get_fast_position_value(piece, square, board)
+        # Use piece_map() to iterate only over occupied squares
+        piece_map = board.piece_map()
         
-        # Simple mobility bonus
-        legal_moves = len(list(board.legal_moves))
+        # Track bishops for bonus
+        white_bishops = 0
+        black_bishops = 0
+        
+        for square, piece in piece_map.items():
+            material = self.piece_values[piece.piece_type]
+            
+            # Position value with table
+            table = None
+            if piece.piece_type == chess.PAWN:
+                table = self.pawn_table
+            elif piece.piece_type == chess.KNIGHT:
+                table = self.knight_table
+            elif piece.piece_type == chess.BISHOP:
+                table = self.bishop_table
+            elif piece.piece_type == chess.ROOK:
+                table = self.rook_table
+            elif piece.piece_type == chess.QUEEN:
+                table = self.queen_table
+            elif piece.piece_type == chess.KING:
+                # We'll handle king separately with blending
+                pass
+            
+            pos_value = 0
+            if table is not None:
+                idx = square if piece.color == chess.WHITE else (7 - square//8)*8 + (square%8)
+                pos_value = table[idx]
+            
+            if piece.color == chess.WHITE:
+                score += material + pos_value
+                white_material += material
+                if piece.piece_type == chess.BISHOP:
+                    white_bishops += 1
+            else:
+                score -= material + pos_value
+                black_material += material
+                if piece.piece_type == chess.BISHOP:
+                    black_bishops += 1
+        
+        # Bishop pair bonus
+        if white_bishops >= 2:
+            score += 40
+        if black_bishops >= 2:
+            score -= 40
+        
+        # Pawn structure evaluation (cached)
+        score += self.evaluate_pawn_structure(board)
+        
+        # Mobility – evaluate for both sides using null move (safer)
+        current_moves = board.legal_moves.count()
+        board.push(chess.Move.null())
+        opponent_moves = board.legal_moves.count()
+        board.pop()
+        
         if board.turn == chess.WHITE:
-            score += legal_moves * 5
+            score += (current_moves - opponent_moves) * 5
         else:
-            score -= legal_moves * 5
+            score -= (current_moves - opponent_moves) * 5
         
-        return score
+        # King safety: blend PST using endgame factor
+        total_material = white_material + black_material
+        endgame_factor = max(0.0, min(1.0, (4000 - total_material) / 2000))
+        
+        # Add king position value with blending
+        for color, material_sum, sign in [(chess.WHITE, white_material, 1), (chess.BLACK, black_material, -1)]:
+            king_sq = board.king(color)
+            if king_sq is not None:
+                idx = king_sq if color == chess.WHITE else (7 - king_sq//8)*8 + (king_sq%8)
+                mid_val = self.king_middle_table[idx]
+                end_val = self.king_end_table[idx]
+                king_val = (1 - endgame_factor) * mid_val + endgame_factor * end_val
+                score += sign * king_val
+        
+        # Return score from side to move perspective
+        return score if board.turn == chess.WHITE else -score
     
-    def get_fast_position_value(self, piece: chess.Piece, square: chess.Square, board: chess.Board) -> float:
-        """Fast position value lookup"""
-        tables = {
-            chess.PAWN: self.pawn_table,
-            chess.KNIGHT: self.knight_table,
-            chess.BISHOP: self.bishop_table,
-            chess.ROOK: self.rook_table,
-            chess.QUEEN: self.queen_table,
-            chess.KING: self.king_middle_table
-        }
-        
-        table = tables.get(piece.piece_type)
-        if not table:
+    # --------------------------------------------------------------------------
+    # Static Exchange Evaluation (SEE)
+    # --------------------------------------------------------------------------
+    def see(self, board: chess.Board, move: chess.Move) -> int:
+        """
+        Static Exchange Evaluation: estimate the material gain/loss of a capture.
+        Returns the net material balance after the exchange (positive if good for moving side).
+        """
+        if not board.is_capture(move):
             return 0
         
-        # Flip square for black pieces
-        if piece.color == chess.WHITE:
-            idx = square
-        else:
-            row = 7 - (square // 8)
-            col = square % 8
-            idx = row * 8 + col
+        # We'll simulate captures on the target square
+        target = move.to_square
+        from_sq = move.from_square
+        piece = board.piece_at(from_sq)
+        if not piece:
+            return 0
         
-        return table[idx]
+        # Get initial attacker value
+        attacker_value = self.see_values[piece.piece_type]
+        victim = board.piece_at(target)
+        if not victim:
+            return 0
+        victim_value = self.see_values[victim.piece_type]
+        
+        # We'll perform a simple exchange using a list of attackers and defenders
+        # For simplicity, we'll use a recursive SEE; but for speed, a simplified version:
+        # Just return victim_value - attacker_value (very basic)
+        # But we'll implement a proper SEE for better move ordering.
+        # This is a simplified SEE; a full implementation would be longer.
+        # We'll use the delta = victim_value - attacker_value and then consider next attackers.
+        # For now, we'll use a quick heuristic: if victim value > attacker value, it's good.
+        return victim_value - attacker_value
     
+    # --------------------------------------------------------------------------
+    # Search with iterative deepening, transposition table, LMR, check extension, null move, aspiration windows
+    # --------------------------------------------------------------------------
     def iterative_deepening_search(self, board: chess.Board, max_depth: int) -> Tuple[Optional[chess.Move], float]:
-        """Perform iterative deepening search with time management"""
+        """Perform iterative deepening search with time management and aspiration windows"""
         self.start_time = time.time()
         self.timeout = False
         self.nodes_searched = 0
+        # Keep transposition table (do NOT clear)
+        if len(self.tt) > self.tt_max_size:
+            # Remove half of entries (crude but effective)
+            keys = list(self.tt.keys())
+            for k in keys[:len(keys)//2]:
+                del self.tt[k]
+        # Also clear pawn TT occasionally (optional)
         
         best_move = None
-        best_value = -math.inf if board.turn == chess.WHITE else math.inf
+        best_value = -math.inf
+        prev_eval = None  # for aspiration windows
         
         # Try depths from 2 to max_depth
         for depth in range(2, max_depth + 1):
@@ -218,161 +437,269 @@ class StrongChessEngine:
                 
             print(f"  Searching depth {depth}...")
             
-            # Search with current depth
-            try:
-                current_best_move, current_best_value = self.alpha_beta_search(
-                    board, depth, -math.inf, math.inf, board.turn == chess.WHITE
-                )
-                
-                if not self.timeout and current_best_move:
-                    best_move = current_best_move
-                    best_value = current_best_value
-                    print(f"    Depth {depth}: eval = {best_value:.1f}, nodes = {self.nodes_searched}")
-                    
-                    # If we found a forced mate, no need to search deeper
-                    if abs(best_value) > 90000:
-                        print(f"    Found forced mate, stopping search")
+            # Store PV move for move ordering at next depth
+            self.pv_move = best_move
+            
+            # Aspiration windows: narrow window around previous score if we have one
+            if prev_eval is not None and depth >= 4:
+                alpha = prev_eval - self.aspiration_window
+                beta  = prev_eval + self.aspiration_window
+                # Search with narrow window
+                for widen in range(self.aspiration_max_widening):
+                    try:
+                        current_best_move, current_best_value = self.alpha_beta_search(
+                            board, depth, alpha, beta, 0, extended=False
+                        )
+                        # If inside window, done
+                        if alpha < current_best_value < beta:
+                            break
+                        # Otherwise widen window and retry
+                        alpha -= self.aspiration_window
+                        beta  += self.aspiration_window
+                    except Exception as e:
+                        # Fallback to full window search
+                        print(f"    Aspiration search error: {e}, using full window")
+                        current_best_move, current_best_value = self.alpha_beta_search(
+                            board, depth, -math.inf, math.inf, 0, extended=False
+                        )
                         break
-            except Exception as e:
-                if not self.timeout:
-                    print(f"    Error at depth {depth}: {e}")
-                break
+                else:
+                    # If still outside after widening, do full window
+                    current_best_move, current_best_value = self.alpha_beta_search(
+                        board, depth, -math.inf, math.inf, 0, extended=False
+                    )
+            else:
+                # First depth or shallow depth: full window
+                current_best_move, current_best_value = self.alpha_beta_search(
+                    board, depth, -math.inf, math.inf, 0, extended=False
+                )
+            
+            if not self.timeout and current_best_move:
+                best_move = current_best_move
+                best_value = current_best_value
+                prev_eval = best_value
+                print(f"    Depth {depth}: eval = {best_value:.1f}, nodes = {self.nodes_searched}")
+                
+                # If we found a forced mate, no need to search deeper
+                if abs(best_value) > 90000:
+                    print(f"    Found forced mate, stopping search")
+                    break
         
         print(f"  Search complete: {self.nodes_searched} nodes")
         return best_move, best_value
     
-    def alpha_beta_search(self, board: chess.Board, depth: int, alpha: float, beta: float, 
-                         maximizing: bool, ply: int = 0) -> Tuple[Optional[chess.Move], float]:
-        """Alpha-beta search with time management"""
+    def alpha_beta_search(self, board: chess.Board, depth: int, alpha: float, beta: float,
+                         ply: int = 0, extended: bool = False) -> Tuple[Optional[chess.Move], float]:
+        """
+        Negamax alpha-beta search with TT, LMR, check extension, null move, futility pruning, reverse futility.
+        extended: whether we already applied a check extension in this branch (to avoid over-extension)
+        """
         # Check timeout every 1000 nodes
         if self.nodes_searched % 1000 == 0 and self.check_timeout():
             return None, 0
         
         self.nodes_searched += 1
         
-        # Check for terminal conditions
-        if board.is_checkmate():
-            return None, -99999 if maximizing else 99999
+        # Check extension (limit to once per branch and only when depth <= 2 to avoid explosion)
+        if not extended and board.is_check() and depth <= 2 and depth < self.max_depth * 2:
+            depth += 1
+            extended = True
         
+        # Transposition table lookup (public method if available)
+        try:
+            key = board.transposition_key()
+        except AttributeError:
+            key = board._transposition_key()  # fallback to private
+        tt_entry = self.tt.get(key)
+        if tt_entry and tt_entry['depth'] >= depth:
+            if tt_entry['flag'] == 'exact':
+                return tt_entry['move'], tt_entry['value']
+            elif tt_entry['flag'] == 'lower':
+                alpha = max(alpha, tt_entry['value'])
+            elif tt_entry['flag'] == 'upper':
+                beta = min(beta, tt_entry['value'])
+            if alpha >= beta:
+                return tt_entry['move'], tt_entry['value']
+        
+        # Terminal conditions
+        if board.is_checkmate():
+            return None, -100000 + ply
         if board.is_stalemate() or board.is_insufficient_material() or board.can_claim_threefold_repetition():
             return None, 0
         
-        # Leaf node - use quiescence search or evaluation
+        # Leaf node – quiescence search
         if depth == 0:
-            return None, self.quiescence(board, alpha, beta, maximizing)
+            return None, self.quiescence(board, alpha, beta, ply)
+        
+        # Material for pruning decisions
+        total_material = sum(self.piece_values[p.piece_type] for p in board.piece_map().values())
+        
+        # Reverse futility pruning (at shallow depth)
+        if depth <= 3 and not board.is_check() and not board.is_checkmate():
+            static_eval = self.evaluate_position(board)
+            margin = self.reverse_futility_margin_base * depth
+            if static_eval - margin >= beta:
+                return None, static_eval
+        
+        # Null-move pruning (if not in check, depth>=3, enough material, and not endgame)
+        if (depth >= 3 and not board.is_check() and 
+            total_material >= self.null_move_material_threshold and
+            total_material > self.endgame_material_threshold):  # skip in endgames
+            board.push(chess.Move.null())
+            _, value = self.alpha_beta_search(board, depth - 1 - self.null_move_reduction, -beta, -beta+1, ply+1, extended)
+            value = -value
+            board.pop()
+            if value >= beta:
+                return None, beta
         
         # Generate and order moves
-        moves = self.order_moves(board, ply, depth==1)
+        moves = self.order_moves(board, ply)
         best_move = None
-        best_value = -math.inf if maximizing else math.inf
+        best_value = -math.inf
+        alpha_orig = alpha
+        beta_orig = beta
+        move_count = 0
         
         for move in moves:
+            move_count += 1
+            
             # Check timeout
             if self.timeout:
                 break
-                
+            
+            # Futility pruning at depth 1
+            if depth == 1 and not board.is_check() and not board.is_capture(move) and not move.promotion:
+                # Static evaluation of current position
+                static_eval = self.evaluate_position(board)
+                margin = self.futility_margin_base * depth
+                # If even with margin we cannot raise alpha, skip (unless gives check)
+                if static_eval + margin < alpha:
+                    board.push(move)
+                    gives_check = board.is_check()
+                    board.pop()
+                    if not gives_check:
+                        continue
+            
+            # Late Move Reduction (LMR) - reduce depth for late quiet moves
+            do_lmr = False
+            reduction = 0
+            if (move_count > 3 and depth >= 3 and 
+                not board.is_capture(move) and not move.promotion and
+                move not in self.killer_moves[ply]):
+                # Reduction scales with move count and depth
+                reduction = 1 + min(move_count // 6, depth // 2)
+                reduction = min(reduction, depth - 1)  # cannot reduce below 0
+                do_lmr = True
+            
             board.push(move)
             
-            # Recursive search
-            _, move_value = self.alpha_beta_search(board, depth - 1, alpha, beta, not maximizing, ply + 1)
+            if do_lmr:
+                new_depth = depth - 1 - reduction
+                if new_depth < 0:
+                    new_depth = 0
+                _, value = self.alpha_beta_search(board, new_depth, -beta, -alpha, ply + 1, extended)
+                value = -value
+                # If the reduced search causes a cutoff or is above alpha, re-search at full depth
+                if value > alpha and value < beta and new_depth < depth - 1:
+                    _, value = self.alpha_beta_search(board, depth - 1, -beta, -alpha, ply + 1, extended)
+                    value = -value
+            else:
+                _, value = self.alpha_beta_search(board, depth - 1, -beta, -alpha, ply + 1, extended)
+                value = -value
             
             board.pop()
             
-            if self.timeout:
-                break
-            
-            if maximizing:
-                if move_value > best_value:
-                    best_value = move_value
-                    best_move = move
-                    alpha = max(alpha, best_value)
-            else:
-                if move_value < best_value:
-                    best_value = move_value
-                    best_move = move
-                    beta = min(beta, best_value)
-            
-            # Alpha-beta cutoff
-            if beta <= alpha:
-                # Store killer move
-                if not board.is_capture(move):
-                    if move != self.killer_moves[ply][0]:
-                        self.killer_moves[ply][1] = self.killer_moves[ply][0]
-                        self.killer_moves[ply][0] = move
-                break
+            if value > best_value:
+                best_value = value
+                best_move = move
+                alpha = max(alpha, value)
+                if alpha >= beta:
+                    # Store killer move and history
+                    if not board.is_capture(move):
+                        if move != self.killer_moves[ply][0]:
+                            self.killer_moves[ply][1] = self.killer_moves[ply][0]
+                            self.killer_moves[ply][0] = move
+                        # Update history table with depth squared
+                        self.history_table[move.from_square][move.to_square] += depth * depth
+                    break
         
-        return best_move, best_value if best_value != -math.inf and best_value != math.inf else 0
+        # Store in transposition table
+        if best_value <= alpha_orig:
+            flag = 'upper'
+        elif best_value >= beta_orig:
+            flag = 'lower'
+        else:
+            flag = 'exact'
+        self.tt[key] = {
+            'depth': depth,
+            'value': best_value,
+            'flag': flag,
+            'move': best_move
+        }
+        
+        return best_move, best_value if best_value != -math.inf else 0
     
-    def quiescence(self, board: chess.Board, alpha: float, beta: float, maximizing: bool) -> float:
-        """Quiescence search to evaluate only capture moves"""
-        # Static evaluation
+    def quiescence(self, board: chess.Board, alpha: float, beta: float, ply: int = 0) -> float:
+        """Quiescence search – only captures, to avoid horizon effect."""
         stand_pat = self.evaluate_position(board)
         
-        if maximizing:
-            if stand_pat >= beta:
-                return beta
-            if stand_pat > alpha:
-                alpha = stand_pat
-        else:
-            if stand_pat <= alpha:
-                return alpha
-            if stand_pat < beta:
-                beta = stand_pat
+        if stand_pat >= beta:
+            return beta
+        if stand_pat > alpha:
+            alpha = stand_pat
         
         # Generate capture moves only
-        capture_moves = []
-        for move in board.legal_moves:
-            if board.is_capture(move):
-                capture_moves.append(move)
-        
-        # Sort captures by expected gain (MVV-LVA)
-        capture_moves.sort(key=lambda m: self.estimate_capture_value(board, m), reverse=True)
+        capture_moves = [m for m in board.legal_moves if board.is_capture(m)]
+        # Order captures by SEE
+        capture_moves.sort(key=lambda m: self.see(board, m), reverse=True)
         
         for move in capture_moves:
             # Check timeout
             if self.check_timeout():
                 break
-                
-            # Delta pruning - skip obviously bad captures
-            if self.delta_pruning(board, move, stand_pat, alpha, beta, maximizing):
+            
+            # Delta pruning – skip captures unlikely to raise alpha
+            if self.delta_pruning(board, move, stand_pat, alpha, beta):
                 continue
-                
+            
             board.push(move)
-            score = -self.quiescence(board, -beta, -alpha, not maximizing)
+            score = -self.quiescence(board, -beta, -alpha, ply + 1)
             board.pop()
             
-            if maximizing:
-                if score >= beta:
-                    return beta
-                if score > alpha:
-                    alpha = score
-            else:
-                if score <= alpha:
-                    return alpha
-                if score < beta:
-                    beta = score
+            if score >= beta:
+                return beta
+            if score > alpha:
+                alpha = score
         
-        return alpha if maximizing else beta
+        return alpha
     
-    def estimate_capture_value(self, board: chess.Board, move: chess.Move) -> int:
-        """Estimate capture value for move ordering (MVV-LVA)"""
+    def see(self, board: chess.Board, move: chess.Move) -> int:
+        """
+        Static Exchange Evaluation: estimate material gain of a capture.
+        Positive means good for moving side.
+        Simplified implementation for speed.
+        """
         if not board.is_capture(move):
             return 0
-            
-        victim = board.piece_at(move.to_square)
-        aggressor = board.piece_at(move.from_square)
         
-        if not victim or not aggressor:
+        target = move.to_square
+        from_sq = move.from_square
+        piece = board.piece_at(from_sq)
+        if not piece:
             return 0
-            
-        victim_value = self.piece_values.get(victim.piece_type, 0)
-        aggressor_value = self.piece_values.get(aggressor.piece_type, 0)
+        attacker_val = self.see_values[piece.piece_type]
+        victim = board.piece_at(target)
+        if not victim:
+            return 0
+        victim_val = self.see_values[victim.piece_type]
         
-        return victim_value * 10 - aggressor_value
+        # Very simple: if victim value > attacker value, it's good
+        # In a full SEE we'd simulate sequence; but for move ordering this is often enough.
+        return victim_val - attacker_val
     
-    def delta_pruning(self, board: chess.Board, move: chess.Move, stand_pat: float, 
-                     alpha: float, beta: float, maximizing: bool) -> bool:
-        """Delta pruning - skip captures that can't improve alpha"""
+    def delta_pruning(self, board: chess.Board, move: chess.Move, stand_pat: float,
+                     alpha: float, beta: float) -> bool:
+        """Delta pruning – skip captures that cannot improve alpha."""
         if not board.is_capture(move):
             return False
             
@@ -382,22 +709,18 @@ class StrongChessEngine:
             
         victim_value = self.piece_values.get(victim.piece_type, 0)
         
-        # If capturing the victim can't raise alpha, skip it
-        if maximizing:
-            if stand_pat + victim_value + 100 < alpha:  # Small margin
-                return True
-        else:
-            if stand_pat - victim_value - 100 > beta:  # Small margin
-                return True
-                
+        # If even after adding the victim's value we cannot reach alpha, prune
+        if stand_pat + victim_value + 100 < alpha:
+            return True
+        
         return False
     
     def order_moves(self, board: chess.Board, ply: int = 0, is_qsearch: bool = False) -> List[chess.Move]:
         """Order moves for better alpha-beta pruning"""
         moves = list(board.legal_moves)
         
-        # If very few moves or at leaf of quiescence search, don't spend time sorting
-        if len(moves) <= 3 or (is_qsearch and len(moves) <= 5):
+        # If very few moves, don't spend time sorting
+        if len(moves) <= 3:
             return moves
         
         move_scores = []
@@ -405,22 +728,30 @@ class StrongChessEngine:
         for move in moves:
             score = 0
             
-            # 1. Captures (ordered by MVV-LVA)
+            # 0. PV move from previous iteration (highest priority)
+            if self.pv_move == move:
+                score = 20000
+            
+            # 1. Captures (ordered by SEE)
             if board.is_capture(move):
-                score = 10000 + self.estimate_capture_value(board, move)
+                score += 10000 + self.see(board, move)
             
             # 2. Promotions
             elif move.promotion:
-                score = 9000 + self.piece_values.get(move.promotion, 0)
+                score += 9000 + self.piece_values.get(move.promotion, 0)
             
             # 3. Killer moves (only in main search)
             elif not is_qsearch:
                 if self.killer_moves[ply][0] == move:
-                    score = 8000
+                    score += 8000
                 elif self.killer_moves[ply][1] == move:
-                    score = 7000
+                    score += 7000
             
-            # 4. Simple positional bonuses
+            # 4. History heuristic (scaled down to not dominate)
+            if not board.is_capture(move) and not move.promotion:
+                score += self.history_table[move.from_square][move.to_square] // 10
+            
+            # 5. Simple positional bonuses
             piece = board.piece_at(move.from_square)
             if piece:
                 # Center control
@@ -484,14 +815,13 @@ class StrongChessEngine:
                     ordered_moves = self.order_moves(board)
                     
                     # Evaluate first few moves quickly
-                    best_score = -math.inf if board.turn == chess.WHITE else math.inf
+                    best_score = -math.inf
                     for move in ordered_moves[:5]:  # Only check first 5
                         board.push(move)
                         score = self.evaluate_position(board)
                         board.pop()
                         
-                        if (board.turn == chess.WHITE and score > best_score) or \
-                           (board.turn == chess.BLACK and score < best_score):
+                        if score > best_score:
                             best_score = score
                             best_move = move
             
